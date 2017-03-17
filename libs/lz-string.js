@@ -483,6 +483,4 @@ const LZString = {
   }
 }
 
-if (!window) {
-  module.exports = LZString
-}
+module.exports = LZString
