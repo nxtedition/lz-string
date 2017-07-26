@@ -1,486 +1,449 @@
-// Copyright (c) 2013 Pieroxy <pieroxy@pieroxy.net>
-// This work is free. You can redistribute it and/or modify it
-// under the terms of the WTFPL, Version 2
-// For more information see LICENSE.txt or http://www.wtfpl.net/
-//
-// For more information, the home page:
-// http://pieroxy.net/blog/pages/lz-string/testing.html
-//
-// LZ-based compression algorithm, version 1.4.4
 
-const f = String.fromCharCode
-const keyStrBase64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/='
-const keyStrUriSafe = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$'
-const baseReverseDic = {}
+var LZStringUnsafe = (
+  function () {
 
-function getBaseValue (alphabet, character) {
-  if (!baseReverseDic[alphabet]) {
-    baseReverseDic[alphabet] = {}
-    for (let i = 0; i < alphabet.length; i++) {
-      baseReverseDic[alphabet][alphabet.charAt(i)] = i
+    // private property
+    var f = String.fromCharCode,
+      Base64CharArray = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=".split(''),
+      UriSafeCharArray = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+-$".split(''),
+      Base64ReverseDic = {},
+      UriSafeReverseDic = {},
+      i = 65;
+    while (i--) {
+      Base64ReverseDic[Base64CharArray[i].charCodeAt(0)] = i;
+      UriSafeReverseDic[UriSafeCharArray[i].charCodeAt(0)] = i;
     }
-  }
-  return baseReverseDic[alphabet][character]
-}
+    var getChar16Bits = function (a) { return f(a); },
+      getCharFromBase64 = function (a) { return Base64CharArray[a]; },
+      getCharFromURISafe = function (a) { return UriSafeCharArray[a]; },
+      getCharFromUTF16 = function (a) { return f(a + 32); };
 
-const LZString = {
-  compressToBase64 (input) {
-    if (input == null) return ''
-    const res = LZString._compress(input, 6, (a) => keyStrBase64.charAt(a))
-    switch (res.length % 4) { // To produce valid Base64
-      default: // When could this happen ?
-      case 0 : return res
-      case 1 : return res + '==='
-      case 2 : return res + '=='
-      case 3 : return res + '='
-    }
-  },
+    var LZString = {
+      compressToBase64: function (input) {
+        if (input == null) return "";
+        var res = LZString._compressToArray(input, 6, getCharFromBase64);
+        // To produce valid Base64
+        var i = res.length % 4;
+        while (i--) {
+          res.push("=");
+        }
 
-  decompressFromBase64 (input) {
-    if (input == null) return ''
-    if (input === '') return null
-    return LZString._decompress(input.length, 32, (index) => getBaseValue(keyStrBase64, input.charAt(index)))
-  },
+        return res.join('');
+      },
 
-  compressToUTF16 (input) {
-    if (input == null) return ''
-    return LZString._compress(input, 15, (a) => f(a + 32)) + ' '
-  },
+      decompressFromBase64: function (input) {
+        if (input == null) return "";
+        if (input == "") return null;
+        return LZString._decompress(input.length, 6, function (index) { return Base64ReverseDic[input.charCodeAt(index)]; });
+      },
 
-  decompressFromUTF16 (compressed) {
-    if (compressed == null) return ''
-    if (compressed === '') return null
-    return LZString._decompress(compressed.length, 16384, (index) => compressed.charCodeAt(index) - 32)
-  },
+      compressToUTF16: function (input) {
+        if (input == null) return "";
+        var compressed = LZString._compressToArray(input, 15, getCharFromUTF16);
+        compressed.push(" ");
+        return compressed.join('');
+      },
 
-  // compress into uint8array (UCS-2 big endian format)
-  compressToUint8Array (uncompressed) {
-    const compressed = LZString.compress(uncompressed)
-    const buf = new Uint8Array(compressed.length * 2) // 2 bytes per character
+      decompressFromUTF16: function (compressed) {
+        if (compressed == null) return "";
+        if (compressed == "") return null;
+        return LZString._decompress(compressed.length, 15, function (index) { return compressed.charCodeAt(index) - 32; });
+      },
 
-    for (let i = 0, TotalLen = compressed.length; i < TotalLen; i++) {
-      const value = compressed.charCodeAt(i)
-      buf[i * 2] = value >>> 8
-      buf[i * 2 + 1] = value % 256
-    }
-    return buf
-  },
+      //compress into uint8array (UCS-2 big endian format)
+      compressToUint8Array: function (uncompressed) {
+        var compressed = LZString.compressToArray(uncompressed);
+        var buf = new Uint8Array(compressed.length * 2); // 2 bytes per character
 
-  // decompress from uint8array (UCS-2 big endian format)
-  decompressFromUint8Array (compressed) {
-    if (compressed === null || compressed === undefined) {
-      return LZString.decompress(compressed)
-    } else {
-      const buf = new Array(compressed.length / 2) // 2 bytes per character
-      for (let i = 0, TotalLen = buf.length; i < TotalLen; i++) {
-        buf[i] = compressed[i * 2] * 256 + compressed[i * 2 + 1]
-      }
+        for (var i = 0, TotalLen = compressed.length; i < TotalLen; i++) {
+          var current_value = compressed[i].charCodeAt(0);
+          buf[i * 2] = current_value >>> 8;
+          buf[i * 2 + 1] = current_value & 0xFF;
+        }
+        return buf;
+      },
 
-      const result = []
-      buf.forEach(function (c) {
-        result.push(f(c))
-      })
-      return LZString.decompress(result.join(''))
-    }
-  },
+      //decompress from uint8array (UCS-2 big endian format)
+      decompressFromUint8Array: function (compressed) {
+        if (compressed === null || compressed === undefined) {
+          return LZString.decompressFromArray(compressed);
+        } else if (compressed.length == 0) {
+          return null;
+        }
+        return LZString._decompress(compressed.length, 8, function (index) { return compressed[index]; });
+      },
 
-  // compress into a string that is already URI encoded
-  compressToEncodedURIComponent (input) {
-    if (input == null) return ''
-    return LZString._compress(input, 6, (a) => keyStrUriSafe.charAt(a))
-  },
 
-  // decompress from an output of compressToEncodedURIComponent
-  decompressFromEncodedURIComponent (input) {
-    if (input == null) return ''
-    if (input === '') return null
-    input = input.replace(/ /g, '+')
-    return LZString._decompress(input.length, 32, (index) => getBaseValue(keyStrUriSafe, input.charAt(index)))
-  },
+      //compress into a string that is already URI encoded
+      compressToEncodedURIComponent: function (input) {
+        if (input == null) return "";
+        return LZString._compressToArray(input, 6, getCharFromURISafe).join('');
+      },
 
-  compress: function (uncompressed) {
-    return LZString._compress(uncompressed, 16, f)
-  },
-  _compress: function (uncompressed, bitsPerChar, getCharFromInt) {
-    if (uncompressed == null) return ''
-    let value
-    let dictionary = new Map()
-    let dictionaryToCreate = new Map()
-    let c = ''
-    let wc = ''
-    let w = ''
-    let enlargeIn = 2 // Compensate for the first entry which should not count
-    let dictSize = 3
-    let numBits = 2
-    let data = []
-    let dataVal = 0
-    let dataPosition = 0
+      //decompress from an output of compressToEncodedURIComponent
+      decompressFromEncodedURIComponent: function (input) {
+        if (input == null) return "";
+        if (input == "") return null;
+        input = input.replace(/ /g, "+");
+        return LZString._decompress(input.length, 6, function (index) { return UriSafeReverseDic[input.charCodeAt(index)]; });
+      },
 
-    for (let ii = 0; ii < uncompressed.length; ii += 1) {
-      c = uncompressed.charAt(ii)
-      if (!dictionary.has(c)) {
-        dictionary.set(c, dictSize++)
-        dictionaryToCreate.set(c, true)
-      }
+      compress: function (uncompressed) {
+        return LZString.compressToArray(uncompressed).join('');
+      },
+      compressToArray: function (uncompressed) {
+        return LZString._compressToArray(uncompressed, 16, getChar16Bits);
+      },
+      _compressToArray: function (uncompressed, bitsPerChar, getCharFromInt) {
+        if (uncompressed == null) return [];
+        var i = 0, j = 0, k = 0, value = 0,
+          node = [3], // first node will always be initialised like this.
+          // we should never output the root anyway,
+          // so we initiate with terminating token
+          // Also, dictionary[1] will be overwritten
+          // by the firs charCode
+          dictionary = [2, 2, node],
+          freshNode = true,
+          c = 0,
+          nextNode,
+          enlargeIn = 1,
+          dictSize = 4,
+          numBits = 2,
+          data = [],
+          data_val = 0,
+          data_position = 0;
 
-      wc = w + c
-      if (dictionary.has(wc)) {
-        w = wc
-      } else {
-        if (dictionaryToCreate.has(w)) {
-          if (w.charCodeAt(0) < 256) {
-            for (let i = 0; i < numBits; i++) {
-              dataVal = (dataVal << 1)
-              if (dataPosition === bitsPerChar - 1) {
-                dataPosition = 0
-                data.push(getCharFromInt(dataVal))
-                dataVal = 0
-              } else {
-                dataPosition++
+        if (uncompressed.length) {
+          // If there is a string, the first charCode is guaranteed to
+          // be new, so we write it to output stream, and add it to the
+          // dictionary. For the same reason we can initialize freshNode
+          // as true, and new_node, node and dictSize as if
+          // it was already added to the dictionary (see above).
+
+          c = uncompressed.charCodeAt(0);
+
+          // == Write first charCode token to output ==
+
+          // 8 or 16 bit?
+          value = c < 256 ? 0 : 1
+
+          // insert "new 8/16 bit charCode" token
+          // into bitstream (value 1)
+          for (i = 0; i < numBits; i++) {
+            // Value is 0 (8 bit) or 1 (16 bit).
+            // We shift it into the bitstream in reverse
+            // (shifting has precedence over bitmasking)
+            data_val = value >> i | data_val << 1;
+            if (++data_position == bitsPerChar) {
+              data_position = 0;
+              data.push(getCharFromInt(data_val));
+              data_val = 0;
+            }
+          }
+          // insert charCode bits into bitstream
+          // Nasty but effective hack:
+          // loop 8 or 16 times based on token value
+          value = 8 + 8 * value;
+          for (i = 0; i < value; i++) {
+            // shifting has precedence over bitmasking
+            data_val = c >> i & 1 | data_val << 1;
+            if (++data_position == bitsPerChar) {
+              data_position = 0;
+              data.push(getCharFromInt(data_val));
+              data_val = 0;
+            }
+          }
+
+          // Add charCode to the dictionary.
+          dictionary[1] = c;
+
+          nextchar:
+          for (j = 1; j < uncompressed.length; j++) {
+            c = uncompressed.charCodeAt(j);
+            // does the new charCode match an existing prefix?
+            for (k = 1; k < node.length; k += 2) {
+              if (node[k] == c) {
+                node = node[k + 1];
+                continue nextchar;
               }
             }
-            value = w.charCodeAt(0)
-            for (let i = 0; i < 8; i++) {
-              dataVal = (dataVal << 1) | (value & 1)
-              if (dataPosition === bitsPerChar - 1) {
-                dataPosition = 0
-                data.push(getCharFromInt(dataVal))
-                dataVal = 0
-              } else {
-                dataPosition++
+            // we only end up here if there is no matching char
+
+            // Prefix+charCode does not exist in trie yet.
+            // We write the prefix to the bitstream, and add
+            // the new charCode to the dictionary if it's new
+            // Then we set `node` to the root node matching
+            // the charCode.
+
+            if (freshNode) {
+              // Prefix is a freshly added character token,
+              // which was already written to the bitstream
+              freshNode = false;
+            } else {
+              // write out the current prefix token
+              value = node[0];
+              for (i = 0; i < numBits; i++) {
+                // shifting has precedence over bitmasking
+                data_val = value >> i & 1 | data_val << 1;
+                if (++data_position == bitsPerChar) {
+                  data_position = 0;
+                  data.push(getCharFromInt(data_val));
+                  data_val = 0;
+                }
               }
-              value = value >> 1
             }
+
+            // Is the new charCode a new character
+            // that needs to be stored at the root?
+            k = 1;
+            while (dictionary[k] != c && k < dictionary.length) {
+              k += 2;
+            }
+            if (k == dictionary.length) {
+              // increase token bitlength if necessary
+              if (--enlargeIn == 0) {
+                enlargeIn = 1 << numBits++;
+              }
+
+              // insert "new 8/16 bit charCode" token,
+              // see comments above for explanation
+              value = c < 256 ? 0 : 1
+              for (i = 0; i < numBits; i++) {
+                data_val = value >> i | data_val << 1;
+                if (++data_position == bitsPerChar) {
+                  data_position = 0;
+                  data.push(getCharFromInt(data_val));
+                  data_val = 0;
+                }
+              }
+              value = 8 + 8 * value;
+              for (i = 0; i < value; i++) {
+                data_val = c >> i & 1 | data_val << 1;
+                if (++data_position == bitsPerChar) {
+                  data_position = 0;
+                  data.push(getCharFromInt(data_val));
+                  data_val = 0;
+                }
+              }
+              dictionary.push(c);
+              dictionary.push([dictSize++]);
+              // Note of that we already wrote
+              // the charCode token to the bitstream
+              freshNode = true;
+            }
+            // add node representing prefix + new charCode to trie
+            node.push(c);
+            node.push([dictSize++]);
+            // increase token bitlength if necessary
+            if (--enlargeIn == 0) {
+              enlargeIn = 1 << numBits++;
+            }
+            // set node to first charCode of new prefix
+            // k is guaranteed to be at the current charCode,
+            // since we either broke out of the while loop
+            // when it matched, or just added the new charCode
+            node = dictionary[k + 1];
+
+          }
+
+          // === Write last prefix to output ===
+          if (freshNode) {
+            // character token already written to output
+            freshNode = false;
           } else {
-            value = 1
-            for (let i = 0; i < numBits; i++) {
-              dataVal = (dataVal << 1) | value
-              if (dataPosition === bitsPerChar - 1) {
-                dataPosition = 0
-                data.push(getCharFromInt(dataVal))
-                dataVal = 0
-              } else {
-                dataPosition++
+            // write out the prefix token
+            value = node[0];
+            for (i = 0; i < numBits; i++) {
+              // shifting has precedence over bitmasking
+              data_val = value >> i & 1 | data_val << 1;
+              if (++data_position == bitsPerChar) {
+                data_position = 0;
+                data.push(getCharFromInt(data_val));
+                data_val = 0;
               }
-              value = 0
             }
-            value = w.charCodeAt(0)
-            for (let i = 0; i < 16; i++) {
-              dataVal = (dataVal << 1) | (value & 1)
-              if (dataPosition === bitsPerChar - 1) {
-                dataPosition = 0
-                data.push(getCharFromInt(dataVal))
-                dataVal = 0
-              } else {
-                dataPosition++
+          }
+
+          // Is c a new character?
+          k = 1;
+          while (dictionary[k] != c && k < dictionary.length) {
+            k += 2;
+          }
+          if (k == dictionary.length) {
+            // increase token bitlength if necessary
+            if (--enlargeIn == 0) {
+              enlargeIn = 1 << numBits++;
+            }
+            // insert "new 8/16 bit charCode" token,
+            // see comments above for explanation
+            value = c < 256 ? 0 : 1
+            for (i = 0; i < numBits; i++) {
+              data_val = value >> i | data_val << 1;
+              if (++data_position == bitsPerChar) {
+                data_position = 0;
+                data.push(getCharFromInt(data_val));
+                data_val = 0;
               }
-              value = value >> 1
+            }
+            value = 8 + 8 * value;
+            for (i = 0; i < value; i++) {
+              data_val = c >> i & 1 | data_val << 1;
+              if (++data_position == bitsPerChar) {
+                data_position = 0;
+                data.push(getCharFromInt(data_val));
+                data_val = 0;
+              }
             }
           }
-          enlargeIn--
-          if (enlargeIn === 0) {
-            enlargeIn = Math.pow(2, numBits)
-            numBits++
+          // increase token bitlength if necessary
+          if (--enlargeIn == 0) {
+            enlargeIn = 1 << numBits++;
           }
-          dictionaryToCreate.delete(w)
-        } else {
-          value = dictionary.get(w)
-          for (let i = 0; i < numBits; i++) {
-            dataVal = (dataVal << 1) | (value & 1)
-            if (dataPosition === bitsPerChar - 1) {
-              dataPosition = 0
-              data.push(getCharFromInt(dataVal))
-              dataVal = 0
-            } else {
-              dataPosition++
+        }
+
+        // Mark the end of the stream
+        for (i = 0; i < numBits; i++) {
+          // shifting has precedence over bitmasking
+          data_val = 2 >> i & 1 | data_val << 1;
+          if (++data_position == bitsPerChar) {
+            data_position = 0;
+            data.push(getCharFromInt(data_val));
+            data_val = 0;
+          }
+        }
+
+        // Flush the last char
+        data_val <<= bitsPerChar - data_position;
+        data.push(getCharFromInt(data_val));
+        return data;
+      },
+
+      decompress: function (compressed) {
+        if (compressed == null) return "";
+        if (compressed == "") return null;
+        return LZString._decompress(compressed.length, 16, function (index) { return compressed.charCodeAt(index); });
+      },
+
+      decompressFromArray: function (compressed) {
+        if (compressed == null) return "";
+        if (compressed.length == 0) return null;
+        return LZString._decompress(compressed.length, 16, function (index) { return compressed[index].charCodeAt(0); });
+      },
+
+      _decompress: function (length, resetBits, getNextValue) {
+        var dictionary = [0, 1, 2],
+          enlargeIn = 4,
+          dictSize = 4,
+          numBits = 3,
+          entry = "",
+          result = [],
+          w = "",
+          bits = 0,
+          maxpower = 2,
+          power = 0,
+          c = "",
+          data_val = getNextValue(0),
+          data_position = resetBits,
+          data_index = 1;
+
+        // Get first token, guaranteed to be either
+        // a new character token (8 or 16 bits)
+        // or end of stream token.
+        while (power != maxpower) {
+          // shifting has precedence over bitmasking
+          bits += (data_val >> --data_position & 1) << power++;
+          if (data_position == 0) {
+            data_position = resetBits;
+            data_val = getNextValue(data_index++);
+          }
+        }
+
+        // if end of stream token, return empty string
+        if (bits == 2) {
+          return "";
+        }
+
+        // else, get character
+        maxpower = bits * 8 + 8;
+        bits = power = 0;
+        while (power != maxpower) {
+          // shifting has precedence over bitmasking
+          bits += (data_val >> --data_position & 1) << power++;
+          if (data_position == 0) {
+            data_position = resetBits;
+            data_val = getNextValue(data_index++);
+          }
+        }
+        c = f(bits);
+        dictionary[3] = c;
+        w = c;
+        result.push(c);
+
+        // read rest of string
+        while (data_index <= length) {
+          // read out next token
+          maxpower = numBits;
+          bits = power = 0;
+          while (power != maxpower) {
+            // shifting has precedence over bitmasking
+            bits += (data_val >> --data_position & 1) << power++;
+            if (data_position == 0) {
+              data_position = resetBits;
+              data_val = getNextValue(data_index++);
             }
-            value = value >> 1
           }
-        }
-        enlargeIn--
-        if (enlargeIn === 0) {
-          enlargeIn = Math.pow(2, numBits)
-          numBits++
-        }
-        // Add wc to the dictionary.
-        dictionary.set(wc, dictSize++)
-        w = String(c)
-      }
-    }
 
-    // Output the code for w.
-    if (w !== '') {
-      if (dictionaryToCreate.has(w)) {
-        if (w.charCodeAt(0) < 256) {
-          for (let i = 0; i < numBits; i++) {
-            dataVal = (dataVal << 1)
-            if (dataPosition === bitsPerChar - 1) {
-              dataPosition = 0
-              data.push(getCharFromInt(dataVal))
-              dataVal = 0
-            } else {
-              dataPosition++
+          // 0 or 1 implies new character token
+          if (bits < 2) {
+            maxpower = (8 + 8 * bits);
+            bits = power = 0;
+            while (power != maxpower) {
+              // shifting has precedence over bitmasking
+              bits += (data_val >> --data_position & 1) << power++;
+              if (data_position == 0) {
+                data_position = resetBits;
+                data_val = getNextValue(data_index++);
+              }
             }
-          }
-          value = w.charCodeAt(0)
-          for (let i = 0; i < 8; i++) {
-            dataVal = (dataVal << 1) | (value & 1)
-            if (dataPosition === bitsPerChar - 1) {
-              dataPosition = 0
-              data.push(getCharFromInt(dataVal))
-              dataVal = 0
-            } else {
-              dataPosition++
+            dictionary[dictSize] = f(bits);
+            bits = dictSize++;
+            if (--enlargeIn == 0) {
+              enlargeIn = 1 << numBits++;
             }
-            value = value >> 1
+          } else if (bits == 2) {
+            // end of stream token
+            return result.join('');
           }
-        } else {
-          value = 1
-          for (let i = 0; i < numBits; i++) {
-            dataVal = (dataVal << 1) | value
-            if (dataPosition === bitsPerChar - 1) {
-              dataPosition = 0
-              data.push(getCharFromInt(dataVal))
-              dataVal = 0
-            } else {
-              dataPosition++
-            }
-            value = 0
+
+          if (bits > dictionary.length) {
+            return null;
           }
-          value = w.charCodeAt(0)
-          for (let i = 0; i < 16; i++) {
-            dataVal = (dataVal << 1) | (value & 1)
-            if (dataPosition === bitsPerChar - 1) {
-              dataPosition = 0
-              data.push(getCharFromInt(dataVal))
-              dataVal = 0
-            } else {
-              dataPosition++
-            }
-            value = value >> 1
+          entry = bits < dictionary.length ? dictionary[bits] : w + w.charAt(0);
+          result.push(entry);
+          // Add w+entry[0] to the dictionary.
+          dictionary[dictSize++] = w + entry.charAt(0);
+
+          w = entry;
+
+          if (--enlargeIn == 0) {
+            enlargeIn = 1 << numBits++;
           }
+
         }
-        enlargeIn--
-        if (enlargeIn === 0) {
-          enlargeIn = Math.pow(2, numBits)
-          numBits++
-        }
-        dictionaryToCreate.delete(w)
-      } else {
-        value = dictionary.get(w)
-        for (let i = 0; i < numBits; i++) {
-          dataVal = (dataVal << 1) | (value & 1)
-          if (dataPosition === bitsPerChar - 1) {
-            dataPosition = 0
-            data.push(getCharFromInt(dataVal))
-            dataVal = 0
-          } else {
-            dataPosition++
-          }
-          value = value >> 1
-        }
+        return "";
       }
-      enlargeIn--
-      if (enlargeIn === 0) {
-        enlargeIn = Math.pow(2, numBits)
-        numBits++
-      }
-    }
-
-    // Mark the end of the stream
-    value = 2
-    for (let i = 0; i < numBits; i++) {
-      dataVal = (dataVal << 1) | (value & 1)
-      if (dataPosition === bitsPerChar - 1) {
-        dataPosition = 0
-        data.push(getCharFromInt(dataVal))
-        dataVal = 0
-      } else {
-        dataPosition++
-      }
-      value = value >> 1
-    }
-
-    // Flush the last char
-    while (true) {
-      dataVal = (dataVal << 1)
-      if (dataPosition === bitsPerChar - 1) {
-        data.push(getCharFromInt(dataVal))
-        break
-      } else dataPosition++
-    }
-    return data.join('')
-  },
-
-  decompress: function (compressed) {
-    if (compressed == null) return ''
-    if (compressed === '') return null
-    return LZString._decompress(compressed.length, 32768, (index) => compressed.charCodeAt(index))
-  },
-
-  _decompress: function (length, resetValue, getNextValue) {
-    let dictionary = []
-    let enlargeIn = 4
-    let dictSize = 4
-    let numBits = 3
-    let entry = ''
-    let result = []
-    let w
-    let resb
-    let c
-    let data = {
-      val: getNextValue(0),
-      position:
-      resetValue,
-      index: 1
-    }
-
-    for (let i = 0; i < 3; i += 1) {
-      dictionary[i] = i
-    }
-
-    let bits = 0
-    let maxpower = Math.pow(2, 2)
-    let power = 1
-    while (power !== maxpower) {
-      resb = data.val & data.position
-      data.position >>= 1
-      if (data.position === 0) {
-        data.position = resetValue
-        data.val = getNextValue(data.index++)
-      }
-      bits |= (resb > 0 ? 1 : 0) * power
-      power <<= 1
-    }
-
-    switch (bits) {
-      case 0:
-        bits = 0
-        maxpower = Math.pow(2, 8)
-        power = 1
-        while (power !== maxpower) {
-          resb = data.val & data.position
-          data.position >>= 1
-          if (data.position === 0) {
-            data.position = resetValue
-            data.val = getNextValue(data.index++)
-          }
-          bits |= (resb > 0 ? 1 : 0) * power
-          power <<= 1
-        }
-        c = f(bits)
-        break
-      case 1:
-        bits = 0
-        maxpower = Math.pow(2, 16)
-        power = 1
-        while (power !== maxpower) {
-          resb = data.val & data.position
-          data.position >>= 1
-          if (data.position === 0) {
-            data.position = resetValue
-            data.val = getNextValue(data.index++)
-          }
-          bits |= (resb > 0 ? 1 : 0) * power
-          power <<= 1
-        }
-        c = f(bits)
-        break
-      case 2:
-        return ''
-    }
-    dictionary[3] = c
-    w = c
-    result.push(c)
-    while (true) {
-      if (data.index > length) {
-        return ''
-      }
-
-      bits = 0
-      maxpower = Math.pow(2, numBits)
-      power = 1
-      while (power !== maxpower) {
-        resb = data.val & data.position
-        data.position >>= 1
-        if (data.position === 0) {
-          data.position = resetValue
-          data.val = getNextValue(data.index++)
-        }
-        bits |= (resb > 0 ? 1 : 0) * power
-        power <<= 1
-      }
-
-      switch (c = bits) {
-        case 0:
-          bits = 0
-          maxpower = Math.pow(2, 8)
-          power = 1
-          while (power !== maxpower) {
-            resb = data.val & data.position
-            data.position >>= 1
-            if (data.position === 0) {
-              data.position = resetValue
-              data.val = getNextValue(data.index++)
-            }
-            bits |= (resb > 0 ? 1 : 0) * power
-            power <<= 1
-          }
-
-          dictionary[dictSize++] = f(bits)
-          c = dictSize - 1
-          enlargeIn--
-          break
-        case 1:
-          bits = 0
-          maxpower = Math.pow(2, 16)
-          power = 1
-          while (power !== maxpower) {
-            resb = data.val & data.position
-            data.position >>= 1
-            if (data.position === 0) {
-              data.position = resetValue
-              data.val = getNextValue(data.index++)
-            }
-            bits |= (resb > 0 ? 1 : 0) * power
-            power <<= 1
-          }
-          dictionary[dictSize++] = f(bits)
-          c = dictSize - 1
-          enlargeIn--
-          break
-        case 2:
-          return result.join('')
-      }
-
-      if (enlargeIn === 0) {
-        enlargeIn = Math.pow(2, numBits)
-        numBits++
-      }
-
-      if (dictionary[c]) {
-        entry = dictionary[c]
-      } else {
-        if (c === dictSize) {
-          entry = w + w.charAt(0)
-        } else {
-          return null
-        }
-      }
-      result.push(entry)
-
-    // Add w+entry[0] to the dictionary.
-      dictionary[dictSize++] = w + entry.charAt(0)
-      enlargeIn--
-
-      w = entry
-
-      if (enlargeIn === 0) {
-        enlargeIn = Math.pow(2, numBits)
-        numBits++
-      }
-    }
+    };
+    return LZString;
   }
-}
+)();
 
-module.exports = LZString
+if (typeof define === 'function' && define.amd) {
+  define(function () { return LZStringUnsafe; });
+} else if (typeof module !== 'undefined' && module != null) {
+  module.exports = LZStringUnsafe
+} else if (typeof angular !== 'undefined' && angular != null) {
+  angular.module('LZStringUnsafe', [])
+    .factory('LZStringUnsafe', function () {
+      return LZStringUnsafe;
+    });
+}
