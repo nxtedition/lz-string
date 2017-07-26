@@ -1,6 +1,6 @@
 {
   "name": "@nxtedition/lz-string",
-  "version": "1.4.4",
+  "version": "2.0.0",
   "license": "WTFPL",
   "main": "libs/lz-string.js",
   "description": "LZ-based compression algorithm",
