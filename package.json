@@ -1,5 +1,5 @@
 {
-  "name": "lz-string",
+  "name": "@nxtedition/lz-string",
   "version": "1.4.4",
   "license": "WTFPL",
   "main": "libs/lz-string.js",
